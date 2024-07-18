@@ -133,10 +133,13 @@ class NCADataCollatorWithPadding:
 
                 sequence_objs.append(a_sequence_obj)
 
+            max_input_ids = -1
             for i, a_seq_obj in enumerate(sequence_objs):
                 for type_key, tokens in a_seq_obj.items():
                     if type_key == "token_type_ids":
                         continue
+                    if type_key == "input_ids":
+                        max_input_ids = max(max_input_ids, len(tokens))
                     batch[f"A{i}_{type_key}"] = tokens 
             for type_key, tokens in prompt_tokens.items():
                 if type_key == "token_type_ids":
@@ -152,7 +155,9 @@ class NCADataCollatorWithPadding:
             batch[f"A{i}"] = [{'role':'user', "content":item["instruction"]}] + resp
             batch[f"A{i}_response_only"] = resp
             batch[f"A{i}_score"] = reward * reward_scale_factor
-        
+        batch["max_input_ids"] = max_input_ids
+        batch["response_num"] = len(item['response'])
+
         return batch
 
     def collate(self, batch):

@@ -395,34 +395,38 @@ class NCATrainer(Trainer):
         if self.is_encoder_decoder:
             raise NotImplementedError
         else:
-            max_length = max(batch["A0_input_ids"].shape[1], batch["A1_input_ids"].shape[1], batch["A2_input_ids"].shape[1], batch["A3_input_ids"].shape[1])
+            # max_length = max(batch["A0_input_ids"].shape[1], batch["A1_input_ids"].shape[1], batch["A2_input_ids"].shape[1], batch["A3_input_ids"].shape[1])
+            max_length = batch["max_input_ids"]
+
+        input_ids_keys = [x for x in batch.keys() if x.startswith('A') and x.endswith('input_ids')]
+        attention_mask_keys = [x for x in batch.keys() if x.startswith('A') and x.endswith('attention_mask')]
+        labels_keys = [x for x in batch.keys() if x.startswith('A') and x.endswith('labels')]
         
+        input_ids_lst= []
+        attention_mask_lst= []
+        labels_lst= []
+        for key in input_ids_keys:
+            input_ids_lst.append(pad_to_length(batch[key], max_length, pad_value=self.padding_value))
+        for key in attention_mask_keys:
+            attention_mask_lst.append(pad_to_length(batch[key], max_length, pad_value=self.padding_value))
+        for key in labels_keys:
+            labels_lst.append(pad_to_length(batch[key], max_length, pad_value=self.padding_value))
+        input_ids_tuple = tuple(input_ids_lst)
+        attention_mask_tuple = tuple(attention_mask_lst)
+        labels_tuple = tuple(labels_lst)
+
+
         concatenated_batch = {
             "concatenated_input_ids": torch.cat(
-                    (
-                        pad_to_length(batch["A0_input_ids"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A1_input_ids"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A2_input_ids"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A3_input_ids"], max_length, pad_value=self.padding_value),
-                    ),
+                    input_ids_tuple,
                     dim=0,
                 ).to(self.accelerator.device),
             "concatenated_attention_mask": torch.cat(
-                    (
-                        pad_to_length(batch["A0_attention_mask"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A1_attention_mask"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A2_attention_mask"], max_length, pad_value=self.padding_value),
-                        pad_to_length(batch["A3_attention_mask"], max_length, pad_value=self.padding_value),
-                    ),
+                    attention_mask_tuple,
                     dim=0,
                 ).to(self.accelerator.device),
             "concatenated_labels": torch.cat(
-                    (
-                        pad_to_length(batch["A0_labels"], max_length, pad_value=self.label_pad_token_id),
-                        pad_to_length(batch["A1_labels"], max_length, pad_value=self.label_pad_token_id),
-                        pad_to_length(batch["A2_labels"], max_length, pad_value=self.label_pad_token_id),
-                        pad_to_length(batch["A3_labels"], max_length, pad_value=self.label_pad_token_id),
-                    ),
+                    labels_tuple,
                     dim=0,
                 ).to(self.accelerator.device),        
             }
@@ -435,27 +439,37 @@ class NCATrainer(Trainer):
     def nca_loss(
         self,
         batch,
-        policy_A0_logps: torch.FloatTensor,
-        policy_A1_logps: torch.FloatTensor,
-        policy_A2_logps: torch.FloatTensor,
-        policy_A3_logps: torch.FloatTensor,
-        reference_A0_logps: torch.FloatTensor,
-        reference_A1_logps: torch.FloatTensor,
-        reference_A2_logps: torch.FloatTensor,
-        reference_A3_logps: torch.FloatTensor,
+        policy_logps_dict,
+        reference_logps_dict,
+        # policy_A0_logps: torch.FloatTensor,
+        # policy_A1_logps: torch.FloatTensor,
+        # policy_A2_logps: torch.FloatTensor,
+        # policy_A3_logps: torch.FloatTensor,
+        # reference_A0_logps: torch.FloatTensor,
+        # reference_A1_logps: torch.FloatTensor,
+        # reference_A2_logps: torch.FloatTensor,
+        # reference_A3_logps: torch.FloatTensor,
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """Compute the NCA loss for a batch of policy and reference model log probabilities.
         """
-        A0_reward = (policy_A0_logps - reference_A0_logps) * self.beta
-        A1_reward = (policy_A1_logps - reference_A1_logps) * self.beta
-        A2_reward = (policy_A2_logps - reference_A2_logps) * self.beta
-        A3_reward = (policy_A3_logps - reference_A3_logps) * self.beta
+
+        pred_rewards = {}
+        for i in range(policy_logps_dict):
+            pred_rewards[f"A{i}_reward"] = (policy_logps_dict[f"policy_A{i}_logps"] - reference_logps_dict[f"reference_A{i}_logps"]) * self.beta
+
         # The definition of temperature_alpha here is different from that in the paper (temperature_alpha = 1 / paper_alpha)
         # rewards = torch.stack([batch["A0_score"],batch["A1_score"],batch["A2_score"],batch["A3_score"]],dim=-1) / self.temperature_alpha #<bz,4>
         # +0.01 here ensures A0 has the highest reward even if r(A1) = r(A0). This is included merely to stay consistent with preference settings. Could be removed.
-        rewards = torch.stack([batch["A0_score"]+0.01,batch["A1_score"],batch["A2_score"],batch["A3_score"]], dim=-1) / self.temperature_alpha #<bz,4>
+
+        # rewards = torch.stack([batch["A0_score"]+0.01,batch["A1_score"],batch["A2_score"],batch["A3_score"]], dim=-1) / self.temperature_alpha #<bz,4>
+        score_keys = sorted([key for key in batch.keys() if key.startswith('A') and key.endswith('_score')])
+        scores = [batch[score_keys[0]] + 0.01] + [batch[key] for key in score_keys[1:]]
+        rewards = torch.stack(scores, dim=-1) / self.temperature_alpha
+
         softlabel = rewards.softmax(dim=-1) #<bz,4>
-        model_rewards = torch.stack([A0_reward, A1_reward, A2_reward, A3_reward], dim=-1) #<bz,4>
+        # model_rewards = torch.stack([A0_reward, A1_reward, A2_reward, A3_reward], dim=-1) #<bz,4>
+        pred_rewards_lst = [v for v in pred_rewards.values()]
+        model_rewards = torch.stack(pred_rewards_lst, dim=-1)
 
         if self.loss_type == "InfoNCA":
             ratio_logits_p = model_rewards.log_softmax(dim=-1)
@@ -465,7 +479,8 @@ class NCATrainer(Trainer):
         else:
             raise ValueError(f"Unknown loss type: {self.loss_type}. Should be one of ['InfoNCA', 'NCA']")
 
-        return losses, A0_reward.detach(), A1_reward.detach(), A2_reward.detach(), A3_reward.detach()
+        # return losses, A0_reward.detach(), A1_reward.detach(), A2_reward.detach(), A3_reward.detach()
+        return losses, [x.detach() for x in pred_rewards_lst]
 
     def _get_batch_logps(
         self,
@@ -530,18 +545,13 @@ class NCATrainer(Trainer):
             concatenated_batch["concatenated_labels"],
             average_log_prob=False,
         )
-
-        A0_logps = all_logps[0*len_chosen:1*len_chosen]
-        A1_logps = all_logps[1*len_chosen:2*len_chosen]
-        A2_logps = all_logps[2*len_chosen:3*len_chosen]
-        A3_logps = all_logps[3*len_chosen:4*len_chosen]
-
-        A0_logits = all_logits[0*len_chosen:1*len_chosen]
-        A1_logits = all_logits[1*len_chosen:2*len_chosen]
-        A2_logits = all_logits[2*len_chosen:3*len_chosen]
-        A3_logits = all_logits[3*len_chosen:4*len_chosen]
-
-        return (A0_logps, A1_logps, A2_logps, A3_logps, A0_logits, A1_logits, A2_logits, A3_logits)
+        return_dict = {}
+        for i in range(response_num):
+            return_dict[f"A{i}_logps"] = all_logps[i*len_chosen:(i+1)*len_chosen]
+            return_dict[f"A{i}_logits"] = all_logits[i*len_chosen:(i+1)*len_chosen]
+            
+        return return_dict
+        # return (A0_logps, A1_logps, A2_logps, A3_logps, A0_logits, A1_logits, A2_logits, A3_logits)
 
     def get_batch_metrics(
         self,
@@ -557,35 +567,50 @@ class NCATrainer(Trainer):
                 with self.accelerator.unwrap_model(self.model).disable_adapter():
                     reference_A0_logps, reference_A1_logps, reference_A2_logps, reference_A3_logps, _, _, _, _ = self.concatenated_forward(self.model, batch)
             else:
-                reference_A0_logps, reference_A1_logps, reference_A2_logps, reference_A3_logps, _, _, _, _ = self.concatenated_forward(self.ref_model, batch)
-        
-        policy_A0_logps, policy_A1_logps, policy_A2_logps, policy_A3_logps, _, _, _, _ = self.concatenated_forward(model, batch)
+                # reference_A0_logps, reference_A1_logps, reference_A2_logps, reference_A3_logps, _, _, _, _ = self.concatenated_forward(self.ref_model, batch)
+                ref_return_dict = self.concatenated_forward(self.ref_model, batch)
+        ref_logps = {f"reference_{k}": v for k, v in ref_return_dict if 'logps' in k}
+
+        # policy_A0_logps, policy_A1_logps, policy_A2_logps, policy_A3_logps, _, _, _, _ = self.concatenated_forward(model, batch)
+        policy_return_dict = self.concatenated_forward(model, batch)
+        policy_logps = {f"policy_{k}": v for k, v in policy_return_dict if 'logps' in k}
 
 
-        losses, A0_rewards, A1_rewards, A2_rewards, A3_rewards = self.nca_loss(
+        losses, reward_lst = self.nca_loss(
             batch,
-            policy_A0_logps,
-            policy_A1_logps,
-            policy_A2_logps,
-            policy_A3_logps,
-            reference_A0_logps,
-            reference_A1_logps,
-            reference_A2_logps,
-            reference_A3_logps,
+            policy_logps_dict=policy_logps,
+            reference_logps_dict=ref_logps
+            # reference_A0_logps,
+            # reference_A1_logps,
+            # reference_A2_logps,
+            # reference_A3_logps,
         )
-        reward_accuracies = ((A0_rewards > A1_rewards).float() + (A0_rewards > A2_rewards).float() + (A0_rewards > A3_rewards).float())/3.0
+        # reward_accuracies = ((A0_rewards > A1_rewards).float() + (A0_rewards > A2_rewards).float() + (A0_rewards > A3_rewards).float())/3.0
+
+        reference_reward = reward_lst[0]
+        comparisons = (reference_reward > reward_tensor[1:]).float()
+        reward_accuracies = comparisons.mean()
+        
+        metrics[f"{prefix}rewards/accuracies"] = reward_accuracies.cpu().mean()
 
         prefix = "eval_" if train_eval == "eval" else ""
-        metrics[f"{prefix}rewards/A0"] = A0_rewards.cpu().mean()
-        metrics[f"{prefix}rewards/A1"] = A1_rewards.cpu().mean()
-        metrics[f"{prefix}rewards/A2"] = A2_rewards.cpu().mean()
-        metrics[f"{prefix}rewards/A3"] = A3_rewards.cpu().mean()
-        metrics[f"{prefix}rewards/accuracies"] = reward_accuracies.cpu().mean()
-        metrics[f"{prefix}rewards/margins"] = (A0_rewards - (A1_rewards+A2_rewards+A3_rewards)/3.0).cpu().mean()
-        metrics[f"{prefix}logps/A0"] = policy_A0_logps.detach().cpu().mean()
-        metrics[f"{prefix}logps/A1"] = policy_A1_logps.detach().cpu().mean()
-        metrics[f"{prefix}logps/A2"] = policy_A2_logps.detach().cpu().mean()
-        metrics[f"{prefix}logps/A3"] = policy_A3_logps.detach().cpu().mean()
+        for i, reward in enumerate(reward_lst):
+            metrics[f"{prefix}logps/A{i}"] = reward.detach().cpu().mean()
+
+
+        reference_reward = reward_lst[0]
+        remaining_mean = reward_lst[1:].mean()
+        margin = (reference_reward - remaining_mean).cpu().mean()
+        metrics[f"{prefix}rewards/margins"] = margin
+        # metrics[f"{prefix}rewards/margins"] = (A0_rewards - (A1_rewards+A2_rewards+A3_rewards)/3.0).cpu().mean()
+
+        for k, p_logps in policy_logps.items():
+            metrics[f"{prefix}_{k}"] = p_logps.detach().cpu().mean()
+        
+        # metrics[f"{prefix}logps/A0"] = policy_A0_logps.detach().cpu().mean()
+        # metrics[f"{prefix}logps/A1"] = policy_A1_logps.detach().cpu().mean()
+        # metrics[f"{prefix}logps/A2"] = policy_A2_logps.detach().cpu().mean()
+        # metrics[f"{prefix}logps/A3"] = policy_A3_logps.detach().cpu().mean()
 
         return losses.mean(), metrics
 
