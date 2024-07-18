@@ -78,11 +78,13 @@ class NCADataCollatorWithPadding:
         batch = {}
 
         if not self.is_encoder_decoder:
-            A0_tokens = self.tokenizer(item["A0"], add_special_tokens=False)#{"input_ids": "attention_mask":}
-            A1_tokens = self.tokenizer(item["A1"], add_special_tokens=False)#{"input_ids": "attention_mask":}
-            A2_tokens = self.tokenizer(item["A2"], add_special_tokens=False)#{"input_ids": "attention_mask":}
-            A3_tokens = self.tokenizer(item["A3"], add_special_tokens=False)#{"input_ids": "attention_mask":}
-            prompt_tokens = self.tokenizer(item["prompt"], add_special_tokens=False)
+            prompt_tokens = self.tokenizer(item["instruction"], add_special_tokens=False)
+
+            # A0_tokens = self.tokenizer(item["A0"], add_special_tokens=False)#{"input_ids": "attention_mask":}
+            # A1_tokens = self.tokenizer(item["A1"], add_special_tokens=False)#{"input_ids": "attention_mask":}
+            # A2_tokens = self.tokenizer(item["A2"], add_special_tokens=False)#{"input_ids": "attention_mask":}
+            # A3_tokens = self.tokenizer(item["A3"], add_special_tokens=False)#{"input_ids": "attention_mask":}
+            # prompt_tokens = self.tokenizer(item["prompt"], add_special_tokens=False)
 
             eos_token_id = self.tokenizer.eos_token_id
             # Get indices in list prompt_tokens["input_ids"] that equals the EOS token (often 0)
@@ -92,41 +94,19 @@ class NCADataCollatorWithPadding:
                 0 if i in eos_indices_prompt else p for i, p in enumerate(prompt_tokens["attention_mask"])
             ]
             prompt_tokens["attention_mask"] = new_attention_mask
-
-            # do the same for A 0-3
-            eos_indices_A0 = [i for i, x in enumerate(A0_tokens["input_ids"]) if x == eos_token_id]
-            new_attention_mask_c = [
-                0 if i in eos_indices_A0 else p for i, p in enumerate(A0_tokens["attention_mask"])
-            ]
-            A0_tokens["attention_mask"] = new_attention_mask_c
-            A0_tokens["input_ids"].append(self.tokenizer.eos_token_id) # prompt is not added with eos finish
-            A0_tokens["attention_mask"].append(1)
-
-            eos_indices_A1 = [i for i, x in enumerate(A1_tokens["input_ids"]) if x == eos_token_id]
-            new_attention_mask_c = [
-                0 if i in eos_indices_A1 else p for i, p in enumerate(A1_tokens["attention_mask"])
-            ]
-            A1_tokens["attention_mask"] = new_attention_mask_c
-            A1_tokens["input_ids"].append(self.tokenizer.eos_token_id)
-            A1_tokens["attention_mask"].append(1)
             
-            eos_indices_A2 = [i for i, x in enumerate(A2_tokens["input_ids"]) if x == eos_token_id]
-            new_attention_mask_c = [
-                0 if i in eos_indices_A2 else p for i, p in enumerate(A2_tokens["attention_mask"])
-            ]
-            A2_tokens["attention_mask"] = new_attention_mask_c
-            A2_tokens["input_ids"].append(self.tokenizer.eos_token_id)
-            A2_tokens["attention_mask"].append(1)
-            
-            eos_indices_A3 = [i for i, x in enumerate(A3_tokens["input_ids"]) if x == eos_token_id]
-            new_attention_mask_c = [
-                0 if i in eos_indices_A3 else p for i, p in enumerate(A3_tokens["attention_mask"])
-            ]
-            A3_tokens["attention_mask"] = new_attention_mask_c
-            A3_tokens["input_ids"].append(self.tokenizer.eos_token_id)
-            A3_tokens["attention_mask"].append(1)
+            response_tokens = [self.tokenizer([{"role":"assistant", "content":x}], add_special_tokens=False) for x in item['response']]
+            longer_response_length = -1
+            for i, a_obj in enumerate(response_tokens):
+                eos_indices_A = [i for i, x in enumerate(a_obj["input_ids"]) if x == eos_token_id]
+                new_attention_mask_c = [
+                    0 if i in eos_indices_A else p for i, p in enumerate(a_obj["attention_mask"])
+                ]
+                a_obj["attention_mask"] = new_attention_mask_c
+                a_obj["input_ids"].append(self.tokenizer.eos_token_id) # prompt is not added with eos finish
+                a_obj["attention_mask"].append(1)
+                longer_response_length = max(longer_response_length, len(a_obj["input_ids"]))
 
-            longer_response_length = max(len(A0_tokens["input_ids"]), len(A1_tokens["input_ids"]), len(A2_tokens["input_ids"]), len(A3_tokens["input_ids"]))
 
             if len(prompt_tokens["input_ids"]) + longer_response_length > self.max_length:#
                 if self.truncation_mode == "keep_start":
@@ -138,64 +118,40 @@ class NCADataCollatorWithPadding:
 
             # if that's still too long, truncate the response
             if len(prompt_tokens["input_ids"]) + longer_response_length > self.max_length:
-                A0_tokens = {k: v[: self.max_length - self.max_prompt_length] for k, v in A0_tokens.items()}
-                A1_tokens = {k: v[: self.max_length - self.max_prompt_length] for k, v in A1_tokens.items()}
-                A2_tokens = {k: v[: self.max_length - self.max_prompt_length] for k, v in A2_tokens.items()}
-                A3_tokens = {k: v[: self.max_length - self.max_prompt_length] for k, v in A3_tokens.items()}
-
-            # Create labels
-            A0_sequence_tokens = {k: prompt_tokens[k] + A0_tokens[k] for k in A0_tokens}
-            A1_sequence_tokens = {k: prompt_tokens[k] + A1_tokens[k] for k in A1_tokens}
-            A2_sequence_tokens = {k: prompt_tokens[k] + A2_tokens[k] for k in A2_tokens}
-            A3_sequence_tokens = {k: prompt_tokens[k] + A3_tokens[k] for k in A3_tokens}        
+                for i, a_obj in enumerate(response_tokens):
+                    response_tokens[i] = {k: v[: self.max_length - self.max_prompt_length] for k, v in a_obj.items()}
             
-            A0_sequence_tokens["labels"] = A0_sequence_tokens["input_ids"][:]
-            A1_sequence_tokens["labels"] = A1_sequence_tokens["input_ids"][:]
-            A2_sequence_tokens["labels"] = A2_sequence_tokens["input_ids"][:]
-            A3_sequence_tokens["labels"] = A3_sequence_tokens["input_ids"][:]
- 
-            if not self.optimize_prompt:
-                A0_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
-                        prompt_tokens["input_ids"]
+            sequence_objs = []
+            for a_obj in response_tokens:
+                a_sequence_obj = {k: prompt_tokens[k] + a_obj[k] for k in a_obj}
+                a_sequence_obj['labels'] = a_sequence_obj["input_ids"][:]
+            
+                if not self.optimize_prompt:
+                    a_sequence_obj["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
+                            prompt_tokens["input_ids"]
                     )
-                A1_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
-                        prompt_tokens["input_ids"]
-                    )
-                A2_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
-                        prompt_tokens["input_ids"]
-                    )
-                A3_sequence_tokens["labels"][: len(prompt_tokens["input_ids"])] = [self.label_pad_token_id] * len(
-                        prompt_tokens["input_ids"]
-                    )
-            for k, toks in {
-                "A0": A0_sequence_tokens,
-                "A1": A1_sequence_tokens,
-                "A2": A2_sequence_tokens,
-                "A3": A3_sequence_tokens,
-                "prompt": prompt_tokens,
-            }.items():
-                for type_key, tokens in toks.items():
+
+                sequence_objs.append(a_sequence_obj)
+
+            for i, a_seq_obj in enumerate(sequence_objs):
+                for type_key, tokens in a_seq_obj.items():
                     if type_key == "token_type_ids":
                         continue
-                    batch[f"{k}_{type_key}"] = tokens
+                    batch[f"A{i}_{type_key}"] = tokens 
+            for type_key, tokens in prompt_tokens.items():
+                if type_key == "token_type_ids":
+                    continue
+                batch[f"prompt_{type_key}"] = tokens
 
         else:
             raise NotImplementedError
 
-        batch["prompt"] = item["prompt"]
-        batch["A0"] = item["prompt"] + item["A0"]
-        batch["A0_response_only"] = item["A0"]
-        batch["A1"] = item["prompt"] + item["A1"]
-        batch["A1_response_only"] = item["A1"]
-        batch["A2"] = item["prompt"] + item["A2"]
-        batch["A2_response_only"] = item["A2"]
-        batch["A3"] = item["prompt"] + item["A3"]
-        batch["A3_response_only"] = item["A3"]
-        
-        batch["A0_score"] = item["score_A0"]
-        batch["A1_score"] = item["score_A1"]
-        batch["A2_score"] = item["score_A2"]
-        batch["A3_score"] = item["score_A3"]
+        batch["prompt"] = item["instruction"]
+        reward_scale_factor = 10 if sum(item['rewards']) / len(item['rewards']) <= 1.0 else 1
+        for i, (resp, reward) in enumerate(zip(response_tokens, item['rewards'])):
+            batch[f"A{i}"] = [{'role':'user', "content":item["instruction"]}] + resp
+            batch[f"A{i}_response_only"] = resp
+            batch[f"A{i}_score"] = reward * reward_scale_factor
         
         return batch
 
@@ -208,7 +164,8 @@ class NCADataCollatorWithPadding:
                     raise NotImplementedError
                 else:
                     # adapted from https://stackoverflow.com/questions/73256206
-                    if "prompt" in k:
+                    # if "prompt" in k:
+                    if "instruction" in k:
                         to_pad = [torch.LongTensor(ex[k][::-1]) for ex in batch]
                     else:
                         to_pad = [torch.LongTensor(ex[k]) for ex in batch]
@@ -223,7 +180,8 @@ class NCADataCollatorWithPadding:
 
                     padded_batch[k] = pad_sequence(to_pad, batch_first=True, padding_value=padding_value)
                     # for the prompt, flip back so padding is on left side
-                    if "prompt" in k:
+                    # if "prompt" in k:
+                    if "instruction" in k:
                         padded_batch[k] = padded_batch[k].flip(dims=[1])
             elif k.endswith("_score"):
                 padded_batch[k] = torch.FloatTensor([ex[k] for ex in batch])
