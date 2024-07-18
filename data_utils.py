@@ -289,6 +289,24 @@ def apply_chat_template(
             example["text_prompt"] = tokenizer.apply_chat_template(
                 prompt_messages, tokenize=False, add_generation_prompt=True
             )
+        elif all(k in example.keys() for k in ("instruction", "real_response", "fake_response")):
+            prompt_messages = [{'role':'user', 'content': example['instruction']}]
+            system_content = example.get('system', '')
+            if not system_content:
+                prompt_messages.insert(0, {"role": "system", "content": ""})#inner voice says nothing
+            else:
+                prompt_messages.insert(0, {'role': 'system', 'content': system_content})
+            chosen_messages = [{'role':'user', 'content': example["real_response"]}]
+            rejected_messages = [{'role':'user', 'content': example["fake_response"]}]
+            example["text_chosen"] = tokenizer.apply_chat_template(chosen_messages, tokenize=False)
+            example["text_rejected"] = tokenizer.apply_chat_template(rejected_messages, tokenize=False)
+            example["text_prompt"] = tokenizer.apply_chat_template(
+                prompt_messages, tokenize=False, add_generation_prompt=True
+            )
+        else:
+            raise ValueError(
+                f"task=dpo should have (chosen:list[dict], rejected:list[dict]) or (instruction:str, real_response:str, fake_respnse:str), {example.keys()=}"
+            )
 
         example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
         example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
