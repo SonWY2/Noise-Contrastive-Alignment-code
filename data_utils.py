@@ -293,15 +293,19 @@ def apply_chat_template(
         example["text_chosen"] = _strip_prefix(example["text_chosen"], assistant_prefix)
         example["text_rejected"] = _strip_prefix(example["text_rejected"], assistant_prefix)
     elif task == "reward":
-        # TODO remove dummy implementation and support arbitrary K number 
-        if all(k in example.keys() for k in ("A0", "A1","A2", "A3")):
+        # # TODO remove dummy implementation and support arbitrary K number 
+        # if all(k in example.keys() for k in ("A0", "A1","A2", "A3")):
+            # prompt_messages = [[msg for msg in example["A0"] if msg["role"] == "user"][0]] #user fisrt query
+        k = len(example['response'])
+        if all(k in example_keys() for k in ("instruction", "response", "rewards")):
+            prompt_messages = [{'role':'user', 'content': example['instruction']}]
             # Compared to reward modeling, we filter out the prompt, so the text is everything after the last assistant token
-            prompt_messages = [[msg for msg in example["A0"] if msg["role"] == "user"][0]] #user fisrt query
             # Insert system message  ensure the first thing for  prompt_messages is system voice
-            if example["A0"][0]["role"] != "system":
+            system_content = example.get('system', '')
+            if not system_content:
                 prompt_messages.insert(0, {"role": "system", "content": ""})#inner voice says nothing
             else:
-                prompt_messages.insert(0, example["A0"][0])
+                prompt_messages.insert(0, {'role': 'system', 'content': system_content})
             # TODO: handle case where chosen/rejected also have system messages
             A0_messages = example["A0"][1:]
             A1_messages = example["A1"][1:]

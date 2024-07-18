@@ -20,8 +20,8 @@ import sys
 
 import torch
 import transformers
-transformers.trainer_utils.PREFIX_CHECKPOINT_DIR = "zephyr_checkpoint"
-transformers.trainer.PREFIX_CHECKPOINT_DIR = "zephyr_checkpoint"
+# transformers.trainer_utils.PREFIX_CHECKPOINT_DIR = "zephyr_checkpoint"
+# transformers.trainer.PREFIX_CHECKPOINT_DIR = "zephyr_checkpoint"
 from transformers import AutoModelForCausalLM, set_seed
 from accelerate import Accelerator
 from alignment import (
