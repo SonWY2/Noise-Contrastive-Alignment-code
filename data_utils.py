@@ -307,21 +307,15 @@ def apply_chat_template(
             else:
                 prompt_messages.insert(0, {'role': 'system', 'content': system_content})
             # TODO: handle case where chosen/rejected also have system messages
-            A0_messages = example["A0"][1:]
-            A1_messages = example["A1"][1:]
-            A2_messages = example["A2"][1:]
-            A3_messages = example["A3"][1:]
-            example["text_A0"] = tokenizer.apply_chat_template(A0_messages, tokenize=False)
-            example["text_A1"] = tokenizer.apply_chat_template(A1_messages, tokenize=False)
-            example["text_A2"] = tokenizer.apply_chat_template(A2_messages, tokenize=False)
-            example["text_A3"] = tokenizer.apply_chat_template(A3_messages, tokenize=False)
+            responses = example['response']
+            for i in range(k):
+                msg = [{'role': 'assistant', 'content': example['response'][i]}]
+                example[f"text_A{i}"] = tokenizer.apply_chat_template(msg, tokenize=False)
+                example[f"text_A{i}"] = _strip_prefix(example[f"text_A{i}"], assistant_prefix)
+
             example["text_prompt"] = tokenizer.apply_chat_template(
                 prompt_messages, tokenize=False, add_generation_prompt=True
             )
-        example["text_A0"] = _strip_prefix(example["text_A0"], assistant_prefix)
-        example["text_A1"] = _strip_prefix(example["text_A1"], assistant_prefix)
-        example["text_A2"] = _strip_prefix(example["text_A2"], assistant_prefix)
-        example["text_A3"] = _strip_prefix(example["text_A3"], assistant_prefix)
     else:
         raise ValueError(
             f"Could not format example as dialogue for `dpo` task! Require `[chosen, rejected]` keys but found {list(example.keys())}"
